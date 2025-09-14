@@ -30,6 +30,9 @@
 #include <sys/cdefs.h>
 #include <stdint-gcc.h>
 #include <driver/usb_serial_jtag.h>
+#ifdef CONFIG_DB_SERIAL_OPTION_USB_CDC_HOST
+#include "db_usb_cdc_host.h"
+#endif
 #include "db_serial.h"
 #include "main.h"
 #include "db_esp32_control.h"
@@ -117,10 +120,13 @@ esp_err_t open_jtag_serial_socket() {
  * @return ESP_FAIL on failure
  */
 esp_err_t open_serial_socket() {
-#ifdef CONFIG_DB_SERIAL_OPTION_JTAG
+#if defined(CONFIG_DB_SERIAL_OPTION_JTAG)
     // open JTAG based serial socket for comms with FC or GCS via FTDI - special feature of official DB for ESP32 boards. Uses the onboard USB for serial I/O with GCS.
     // this is basically the GND-Station mode for the ESP32
     return open_jtag_serial_socket();
+#elif defined(CONFIG_DB_SERIAL_OPTION_USB_CDC_HOST)
+    // open USB CDC-ACM host connection to the FCU via OTG port
+    return db_usb_cdc_host_init();
 #else
     // open UART based serial socket for comms with FC or GCS via FTDI - configured by pins in the web interface
     return open_uart_serial_socket();
@@ -133,13 +139,18 @@ esp_err_t open_serial_socket() {
  * @param data_length Size of payload to write to UART
  */
 void write_to_serial(const uint8_t data_buffer[], const unsigned int data_length) {
-#ifdef CONFIG_DB_SERIAL_OPTION_JTAG
+#if defined(CONFIG_DB_SERIAL_OPTION_JTAG)
     // Writes data from buffer to JTAG based serial interface
     int written = usb_serial_jtag_write_bytes(data_buffer, data_length, 20 / portTICK_PERIOD_MS);
     if (written != data_length) {
         ESP_LOGW(TAG, "Wrote only %i of %i bytes to JTAG", written, data_length);
     } else {
         // all good. Wrote all bytes
+    }
+#elif defined(CONFIG_DB_SERIAL_OPTION_USB_CDC_HOST)
+    int written = db_usb_cdc_host_write(data_buffer, data_length, 0);
+    if (written != data_length) {
+        ESP_LOGD(TAG, "Wrote only %i of %i bytes to USB CDC Host", written, data_length);
     }
 #else
     // UART based serial socket for comms with FC or GCS via FTDI - configured by pins in the web interface
@@ -161,8 +172,10 @@ void write_to_serial(const uint8_t data_buffer[], const unsigned int data_length
  * @return number of read bytes
  */
 int db_read_serial(uint8_t *uart_read_buf, uint length) {
-#ifdef CONFIG_DB_SERIAL_OPTION_JTAG
+#if defined(CONFIG_DB_SERIAL_OPTION_JTAG)
     return usb_serial_jtag_read_bytes(uart_read_buf, length, 0);
+#elif defined(CONFIG_DB_SERIAL_OPTION_USB_CDC_HOST)
+    return db_usb_cdc_host_read(uart_read_buf, length, 0);
 #else
     // UART based serial socket for communication with FC or GCS via FTDI - configured by pins in the web interface
     return uart_read_bytes(UART_NUM, uart_read_buf, length, 0);

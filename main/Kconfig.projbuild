@@ -68,6 +68,18 @@ menu "DroneBridge for ESP32 Configuration"
                 A ground control station can connect to the USB port directly without having to use a FTDI in between.
                 Not intended for connecting to a UAV etc. Use native UART instead.
                 WARNING: No logging available via USB port.
+        config DB_SERIAL_OPTION_USB_CDC_HOST
+            bool "USB CDC Host (OTG)"
+            depends on IDF_TARGET_ESP32S2 || IDF_TARGET_ESP32S3
+            help
+                Use the ESP32-S2/S3 USB-OTG peripheral in USB Host mode to connect directly to
+                an FCU that enumerates as a CDC-ACM device over USB (e.g. Matek H743, Cube Orange,
+                Speedybee F405). The ESP32 acts as the USB Host and forwards the serial stream.
+
+                Notes:
+                - Requires external 5V VBUS power for the FCU. Use a powered USB hub or inject 5V.
+                - Logging remains on UART0 or USB-Serial-JTAG (secondary console) as configured.
+                - Only CDC-ACM devices are supported; vendor-specific USB UARTs are not.
     endchoice
 
     config DB_SKYBRUSH_SUPPORT

@@ -22,6 +22,30 @@ function BuildAndCopy($config, $folder, $target) {
     cp .\build\partition_table\partition-table.bin $release_foldername\$folder
 }
 
+# Build S3 USB Host variant by deriving from sdkconfig_s3 and applying overrides
+function BuildAndCopyS3UsbHost() {
+    rm -Recurse -Force .\build
+    idf.py fullclean
+    idf.py set-target esp32s3
+    cp .\sdkconfig_s3 .\sdkconfig
+    # Apply overrides: select USB CDC Host, disable UART option, enable hub support
+    $cfg = Get-Content .\sdkconfig
+    $cfg = $cfg -replace '^CONFIG_DB_SERIAL_OPTION_UART=y', '# CONFIG_DB_SERIAL_OPTION_UART is not set'
+    $cfg = $cfg -replace '^# CONFIG_DB_SERIAL_OPTION_USB_CDC_HOST is not set', 'CONFIG_DB_SERIAL_OPTION_USB_CDC_HOST=y'
+    $cfg = $cfg -replace '^# CONFIG_USB_HOST_HUBS_SUPPORTED is not set', 'CONFIG_USB_HOST_HUBS_SUPPORTED=y'
+    $cfg | Set-Content .\sdkconfig
+    if (-not (Select-String -Path .\sdkconfig -Pattern 'CONFIG_DB_SERIAL_OPTION_USB_CDC_HOST=y' -Quiet)) {
+        Add-Content .\sdkconfig 'CONFIG_DB_SERIAL_OPTION_USB_CDC_HOST=y'
+    }
+    idf.py build
+    mkdir $release_foldername\esp32s3_USBHost
+    cp .\build\flash_args $release_foldername\esp32s3_USBHost\flash_args.txt
+    cp .\build\db_esp32.bin $release_foldername\esp32s3_USBHost
+    cp .\build\bootloader\bootloader.bin $release_foldername\esp32s3_USBHost
+    cp .\build\www.bin $release_foldername\esp32s3_USBHost
+    cp .\build\partition_table\partition-table.bin $release_foldername\esp32s3_USBHost
+}
+
 # ESP32
 BuildAndCopy "sdkconfig_esp32" "esp32" "esp32"
 # BuildAndCopy "sdkconfig_esp32_noUARTConsole" "esp32_noUARTConsole" # Build issue - ESP-NOW wants a console for debugging
@@ -34,6 +58,7 @@ BuildAndCopy "sdkconfig_s2_noUARTConsole" "esp32s2_noUARTConsole" "esp32s2"
 BuildAndCopy "sdkconfig_s3" "esp32s3" "esp32s3"
 BuildAndCopy "sdkconfig_s3_noUARTConsole" "esp32s3_noUARTConsole" "esp32s3"
 BuildAndCopy "sdkconfig_s3_serial_via_JTAG" "esp32s3_USBSerial" "esp32s3"
+BuildAndCopyS3UsbHost
 
 # ESP32-C3
 BuildAndCopy "sdkconfig_c3" "esp32c3" "esp32c3"
