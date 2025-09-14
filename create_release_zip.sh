@@ -28,6 +28,29 @@ build_and_copy() {
     cp ./build/partition_table/partition-table.bin $release_foldername/$folder
 }
 
+# Build S3 USB Host variant by deriving from sdkconfig_s3 and applying overrides
+build_and_copy_s3_usb_host() {
+    rm -rf ./build
+    idf.py fullclean
+    cp sdkconfig_s3 sdkconfig
+    # Apply overrides: select USB CDC Host, disable UART option, enable hub support
+    sed -i.bak \
+        -e 's/^CONFIG_DB_SERIAL_OPTION_UART=y/# CONFIG_DB_SERIAL_OPTION_UART is not set/' \
+        -e 's/^# CONFIG_DB_SERIAL_OPTION_USB_CDC_HOST is not set/CONFIG_DB_SERIAL_OPTION_USB_CDC_HOST=y/' \
+        -e 's/^# CONFIG_USB_HOST_HUBS_SUPPORTED is not set/CONFIG_USB_HOST_HUBS_SUPPORTED=y/' \
+        sdkconfig
+    if ! grep -q '^CONFIG_DB_SERIAL_OPTION_USB_CDC_HOST=y' sdkconfig; then
+        echo 'CONFIG_DB_SERIAL_OPTION_USB_CDC_HOST=y' >> sdkconfig
+    fi
+    idf.py build
+    mkdir -p $release_foldername/esp32s3_USBHost
+    cp ./build/flash_args $release_foldername/esp32s3_USBHost/flash_args.txt
+    cp ./build/db_esp32.bin $release_foldername/esp32s3_USBHost
+    cp ./build/bootloader/bootloader.bin $release_foldername/esp32s3_USBHost
+    cp ./build/www.bin $release_foldername/esp32s3_USBHost
+    cp ./build/partition_table/partition-table.bin $release_foldername/esp32s3_USBHost
+}
+
 # ESP32
 build_and_copy sdkconfig_esp32 esp32
 # build_and_copy sdkconfig_esp32_noUARTConsole esp32_noUARTConsole # Build issue - ESP-NOW wants a console for debugging
@@ -40,6 +63,7 @@ build_and_copy sdkconfig_s2_noUARTConsole esp32s2_noUARTConsole
 build_and_copy sdkconfig_s3 esp32s3
 build_and_copy sdkconfig_s3_noUARTConsole esp32s3_noUARTConsole
 build_and_copy sdkconfig_s3_serial_via_JTAG esp32s3_USBSerial
+build_and_copy_s3_usb_host
 
 # ESP32-C3
 build_and_copy sdkconfig_c3 esp32c3

@@ -1,0 +1,12 @@
+# Minimal overrides for ESP32-S3 USB CDC Host build.
+# This file is not a full sdkconfig snapshot. The packaging script derives
+# the full configuration from sdkconfig_s3 and applies these overrides.
+
+# Select USB CDC Host serial option
+CONFIG_DB_SERIAL_OPTION_USB_CDC_HOST=y
+# CONFIG_DB_SERIAL_OPTION_UART is not set
+# CONFIG_DB_SERIAL_OPTION_JTAG is not set
+
+# Enable USB Hub support for powered hubs (optional but recommended)
+CONFIG_USB_HOST_HUBS_SUPPORTED=y
+

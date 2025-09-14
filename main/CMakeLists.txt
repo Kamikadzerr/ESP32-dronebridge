@@ -14,8 +14,18 @@ if(CONFIG_BT_ENABLED)
     list(APPEND SRCS db_ble.c)
 endif()
 
+if(CONFIG_DB_SERIAL_OPTION_USB_CDC_HOST)
+    list(APPEND SRCS db_usb_cdc_host.c)
+endif()
+
+set(REQUIRES_LIST )
+if(CONFIG_DB_SERIAL_OPTION_USB_CDC_HOST)
+    list(APPEND REQUIRES_LIST usb cdc_acm_host)
+endif()
+
 idf_component_register(SRCS ${SRCS}
-        INCLUDE_DIRS ".")
+        INCLUDE_DIRS "."
+        REQUIRES ${REQUIRES_LIST})
 
 
 if(CONFIG_WEB_DEPLOY_SF)

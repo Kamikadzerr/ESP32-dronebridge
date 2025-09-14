@@ -72,6 +72,16 @@ In any other case, there are multiple ways how to flash the firmware.
 1.  Connect the UART of the ESP32 to a 3.3V UART of your flight controller. It is not recommended to use the ESP32s pins that are marked with TX & RX since they often are connected to the internal serial ouput. Go for any other pin instead!
 2.  Set the flight controller port to the desired protocol.
 
+### ESP32-S3-DevKitC-1 via USB-OTG (CDC-ACM)
+-  The ESP32-S3 can act as a USB Host and connect directly to FCUs that enumerate as CDC-ACM USB devices (e.g., Matek H743, Cube Orange, SpeedyBee F405).
+-  Hardware: use the ESP32-S3-DevKitC-1 Type‑C OTG port. Provide 5V VBUS power to the FCU (through a powered USB hub or a VBUS power switch). The S3 board does not source 5V by default.
+-  Build setup:
+   -  `idf.py set-target esp32s3`
+   -  `idf.py menuconfig` → DroneBridge for ESP32 Configuration → Serial interface for data → select `USB CDC Host (OTG)`
+   -  Build and flash as usual: `idf.py build flash monitor`
+-  Logging still appears on the configured console (UART0 or USB‑Serial‑JTAG). The USB‑OTG port is exclusively used for FCU serial.
+-  If you use a powered USB hub, enable hub support in sdkconfig: `USB-OTG → Hub Driver Configuration → USB Host hubs supported`.
+
 **Check out the manufacturer datasheet! Only some modules can take more than 3.3V. Follow the recommendations by the ESP32 board manufacturer for powering the device**  
 **[For further info please check the wiki!](https://dronebridge.gitbook.io/docs/dronebridge-for-esp32/hardware-and-wiring)**
 
