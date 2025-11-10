@@ -57,14 +57,32 @@ int open_tcp_server(int port) {
 }
 
 void db_send_to_all_tcp_clients(const int tcp_clients[], uint8_t data[], uint data_length) {
+    int clients_found = 0;
     for (int i = 0; i < CONFIG_LWIP_MAX_ACTIVE_TCP; i++) {
         if (tcp_clients[i] > 0) {
-            ESP_LOGD(TCP_TAG, "Sending %i bytes", data_length);
+            clients_found++;
+            static int debug_tcp_send_counter = 0;
+            debug_tcp_send_counter += data_length;
+            if (debug_tcp_send_counter >= 100) {
+                ESP_LOGI(TCP_TAG, "Sending %u bytes to TCP client[%d] (fd: %d)", data_length, i, tcp_clients[i]);
+                debug_tcp_send_counter = 0;
+            }
             int err = write(tcp_clients[i], data, data_length);
             if (err < 0) {
-                ESP_LOGE(TCP_TAG, "Error occurred during sending: %d", errno);
+                if (errno == EPIPE || errno == ECONNRESET) {
+                    ESP_LOGW(TCP_TAG, "TCP client[%d] (fd: %d) connection broken during send: %d", i, tcp_clients[i], errno);
+                } else {
+                    ESP_LOGE(TCP_TAG, "Error occurred during sending to client[%d] (fd: %d): %d", i, tcp_clients[i], errno);
+                }
+            } else if (err != (int)data_length) {
+                ESP_LOGW(TCP_TAG, "Partial write to client[%d]: sent %d of %u bytes", i, err, data_length);
             }
         }
     }
-
+    if (clients_found == 0 && data_length > 0) {
+        static int no_client_warn_counter = 0;
+        if (no_client_warn_counter++ % 100 == 0) {
+            ESP_LOGW(TCP_TAG, "No TCP clients connected to send %u bytes", data_length);
+        }
+    }
 }

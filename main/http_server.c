@@ -21,6 +21,7 @@
 
 #include <db_parameters.h>
 #include <string.h>
+#include <stdlib.h>
 #include <fcntl.h>
 #include <lwip/sockets.h>
 #include <esp_chip_info.h>
@@ -32,6 +33,9 @@
 #include "globals.h"
 #include "main.h"
 #include "db_serial.h"
+#ifdef CONFIG_DB_SERIAL_OPTION_USB_CDC_HOST
+#include "db_usb_cdc_host.h"
+#endif
 
 #define TAG "DB_HTTP_REST"
 #define REST_CHECK(a, str, goto_tag, ...)                                              \
@@ -304,6 +308,11 @@ static esp_err_t system_info_get_handler(httpd_req_t *req) {
 #else
     cJSON_AddNumberToObject(root, "serial_via_JTAG", 0);
 #endif
+#ifdef CONFIG_DB_SERIAL_OPTION_USB_CDC_HOST
+    cJSON_AddNumberToObject(root, "serial_via_USB", 1);
+#else
+    cJSON_AddNumberToObject(root, "serial_via_USB", 0);
+#endif
     const char *sys_info = cJSON_Print(root);
     httpd_resp_sendstr(req, sys_info);
     free((void *) sys_info);
@@ -407,6 +416,329 @@ static esp_err_t settings_get_handler(httpd_req_t *req) {
     return ESP_OK;
 }
 
+/**
+ * Returns UART test status including pin configuration and reception statistics
+ * @param req
+ * @return ESP_OK on successfully sending the http request
+ */
+static esp_err_t uart_test_get_handler(httpd_req_t *req) {
+    httpd_resp_set_type(req, "application/json");
+    uart_test_status_t status;
+    esp_err_t err = db_uart_get_test_status(&status);
+    
+    cJSON *root = cJSON_CreateObject();
+    if (err == ESP_OK) {
+        cJSON_AddNumberToObject(root, "tx_pin", status.tx_pin);
+        cJSON_AddNumberToObject(root, "rx_pin", status.rx_pin);
+        cJSON_AddNumberToObject(root, "rts_pin", status.rts_pin);
+        cJSON_AddNumberToObject(root, "cts_pin", status.cts_pin);
+        cJSON_AddNumberToObject(root, "baud_rate", status.baud_rate);
+        cJSON_AddBoolToObject(root, "uart_initialized", status.uart_initialized);
+        if (strlen(status.init_error) > 0) {
+            cJSON_AddStringToObject(root, "init_error", status.init_error);
+        }
+        cJSON_AddStringToObject(root, "loopback_test_status", status.loopback_test_status);
+        cJSON_AddNumberToObject(root, "bytes_received_last_10s", status.bytes_received_last_10s);
+        if (status.last_reception_timestamp > 0) {
+            cJSON_AddNumberToObject(root, "last_reception_timestamp", status.last_reception_timestamp);
+        } else {
+            cJSON_AddStringToObject(root, "last_reception_timestamp", "never");
+        }
+    } else {
+        cJSON_AddStringToObject(root, "error", "Failed to get UART test status");
+    }
+    
+    const char *json_str = cJSON_Print(root);
+    httpd_resp_sendstr(req, json_str);
+    free((void *) json_str);
+    cJSON_Delete(root);
+    return ESP_OK;
+}
+
+/**
+ * Handles UART test commands (e.g., loopback test)
+ * Expects JSON: {"test": "loopback", "duration_ms": 1000}
+ * @param req
+ * @return ESP_OK on successfully processing the request
+ */
+static esp_err_t uart_test_post_handler(httpd_req_t *req) {
+    int total_len = req->content_len;
+    int cur_len = 0;
+    char *buf = ((rest_server_context_t *) (req->user_ctx))->scratch;
+    int received = 0;
+    
+    if (total_len >= SCRATCH_BUFSIZE) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "content too long");
+        return ESP_FAIL;
+    }
+    
+    while (cur_len < total_len) {
+        received = httpd_req_recv(req, buf + cur_len, total_len);
+        if (received <= 0) {
+            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to receive request");
+            return ESP_FAIL;
+        }
+        cur_len += received;
+    }
+    buf[total_len] = '\0';
+    
+    cJSON *root = cJSON_Parse(buf);
+    if (root == NULL) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+        return ESP_FAIL;
+    }
+    
+    httpd_resp_set_type(req, "application/json");
+    cJSON *response = cJSON_CreateObject();
+    
+    cJSON *test_type = cJSON_GetObjectItem(root, "test");
+    if (test_type && cJSON_IsString(test_type)) {
+        if (strcmp(test_type->valuestring, "loopback") == 0) {
+            uint32_t duration_ms = 1000; // default
+            cJSON *duration = cJSON_GetObjectItem(root, "duration_ms");
+            if (duration && cJSON_IsNumber(duration)) {
+                duration_ms = duration->valueint;
+            }
+            
+            esp_err_t result = db_uart_run_loopback_test(duration_ms);
+            if (result == ESP_OK) {
+                cJSON_AddStringToObject(response, "status", "success");
+                cJSON_AddStringToObject(response, "message", "Loopback test passed");
+            } else {
+                cJSON_AddStringToObject(response, "status", "failed");
+                cJSON_AddStringToObject(response, "message", "Loopback test failed - check if TX is connected to RX");
+            }
+        } else {
+            cJSON_AddStringToObject(response, "status", "error");
+            cJSON_AddStringToObject(response, "message", "Unknown test type");
+        }
+    } else {
+        cJSON_AddStringToObject(response, "status", "error");
+        cJSON_AddStringToObject(response, "message", "Missing or invalid 'test' field");
+    }
+    
+    const char *json_str = cJSON_Print(response);
+    httpd_resp_sendstr(req, json_str);
+    free((void *) json_str);
+    cJSON_Delete(response);
+    cJSON_Delete(root);
+    return ESP_OK;
+}
+
+/**
+ * Returns GPIO scan status
+ * @param req
+ * @return ESP_OK on successfully sending the http request
+ */
+static esp_err_t uart_scan_get_handler(httpd_req_t *req) {
+    httpd_resp_set_type(req, "application/json");
+    gpio_scan_status_t *status = calloc(1, sizeof(gpio_scan_status_t));
+    if (status == NULL) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
+        return ESP_FAIL;
+    }
+    esp_err_t err = db_uart_get_scan_status(status);
+    
+    cJSON *root = cJSON_CreateObject();
+    if (root == NULL) {
+        free(status);
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to create JSON object");
+        return ESP_FAIL;
+    }
+    
+    if (err == ESP_OK) {
+        // Ensure strings are null-terminated
+        status->scan_status[sizeof(status->scan_status) - 1] = '\0';
+        
+        cJSON_AddBoolToObject(root, "scan_in_progress", status->scan_in_progress);
+        cJSON_AddStringToObject(root, "scan_status", status->scan_status);
+        cJSON_AddNumberToObject(root, "result_count", status->result_count);
+        
+        cJSON *results = cJSON_CreateArray();
+        if (results != NULL) {
+            // Ensure result_count is within bounds
+            int result_count = status->result_count;
+            if (result_count > MAX_SCAN_RESULTS) {
+                result_count = MAX_SCAN_RESULTS;
+            }
+            
+            for (int i = 0; i < result_count; i++) {
+                cJSON *result = cJSON_CreateObject();
+                if (result != NULL) {
+                    // Ensure error_msg is null-terminated
+                    status->results[i].error_msg[sizeof(status->results[i].error_msg) - 1] = '\0';
+                    
+                    cJSON_AddNumberToObject(result, "tx_pin", status->results[i].tx_pin);
+                    cJSON_AddNumberToObject(result, "rx_pin", status->results[i].rx_pin);
+                    cJSON_AddBoolToObject(result, "test_passed", status->results[i].test_passed);
+                    cJSON_AddStringToObject(result, "error_msg", status->results[i].error_msg);
+                    cJSON_AddItemToArray(results, result);
+                }
+            }
+            cJSON_AddItemToObject(root, "results", results);
+        }
+    } else {
+        cJSON_AddStringToObject(root, "error", "Failed to get GPIO scan status");
+    }
+    
+    const char *json_str = cJSON_Print(root);
+    if (json_str == NULL) {
+        cJSON_Delete(root);
+        free(status);
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to serialize JSON");
+        return ESP_FAIL;
+    }
+    
+    esp_err_t ret = httpd_resp_sendstr(req, json_str);
+    free((void *) json_str);
+    cJSON_Delete(root);
+    free(status);
+    return ret;
+}
+
+/**
+ * Handles GPIO scan commands (start/stop)
+ * Expects JSON: {"action": "start"} or {"action": "stop"}
+ * @param req
+ * @return ESP_OK on successfully processing the request
+ */
+static esp_err_t uart_scan_post_handler(httpd_req_t *req) {
+    int total_len = req->content_len;
+    int cur_len = 0;
+    char *buf = ((rest_server_context_t *) (req->user_ctx))->scratch;
+    int received = 0;
+    
+    if (total_len >= SCRATCH_BUFSIZE) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "content too long");
+        return ESP_FAIL;
+    }
+    
+    while (cur_len < total_len) {
+        received = httpd_req_recv(req, buf + cur_len, total_len);
+        if (received <= 0) {
+            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to receive request");
+            return ESP_FAIL;
+        }
+        cur_len += received;
+    }
+    buf[total_len] = '\0';
+    
+    cJSON *root = cJSON_Parse(buf);
+    if (root == NULL) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+        return ESP_FAIL;
+    }
+    
+    httpd_resp_set_type(req, "application/json");
+    cJSON *response = cJSON_CreateObject();
+    
+    cJSON *action = cJSON_GetObjectItem(root, "action");
+    if (action && cJSON_IsString(action)) {
+        if (strcmp(action->valuestring, "start") == 0) {
+            esp_err_t result = db_uart_start_gpio_scan();
+            if (result == ESP_OK) {
+                cJSON_AddStringToObject(response, "status", "success");
+                cJSON_AddStringToObject(response, "message", "GPIO scan started");
+            } else if (result == ESP_ERR_INVALID_STATE) {
+                cJSON_AddStringToObject(response, "status", "error");
+                cJSON_AddStringToObject(response, "message", "Scan already in progress");
+            } else {
+                cJSON_AddStringToObject(response, "status", "error");
+                cJSON_AddStringToObject(response, "message", "Failed to start scan");
+            }
+        } else if (strcmp(action->valuestring, "stop") == 0) {
+            db_uart_stop_gpio_scan();
+            cJSON_AddStringToObject(response, "status", "success");
+            cJSON_AddStringToObject(response, "message", "GPIO scan stopped");
+        } else {
+            cJSON_AddStringToObject(response, "status", "error");
+            cJSON_AddStringToObject(response, "message", "Unknown action");
+        }
+    } else {
+        cJSON_AddStringToObject(response, "status", "error");
+        cJSON_AddStringToObject(response, "message", "Missing or invalid 'action' field");
+    }
+    
+    const char *json_str = cJSON_Print(response);
+    httpd_resp_sendstr(req, json_str);
+    free((void *) json_str);
+    cJSON_Delete(response);
+    cJSON_Delete(root);
+    return ESP_OK;
+}
+
+/**
+ * Returns USB CDC Host status
+ * @param req
+ * @return ESP_OK on successfully sending the http request
+ */
+static esp_err_t usb_status_get_handler(httpd_req_t *req) {
+    httpd_resp_set_type(req, "application/json");
+    
+#ifdef CONFIG_DB_SERIAL_OPTION_USB_CDC_HOST
+    usb_cdc_host_status_t status;
+    esp_err_t err = db_usb_cdc_host_get_status(&status);
+    
+    cJSON *root = cJSON_CreateObject();
+    if (root == NULL) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to create JSON object");
+        return ESP_FAIL;
+    }
+    
+    if (err == ESP_OK) {
+        cJSON_AddBoolToObject(root, "host_initialized", status.host_initialized);
+        cJSON_AddBoolToObject(root, "device_connected", status.device_connected);
+        if (status.device_connected) {
+            cJSON_AddNumberToObject(root, "vid", status.vid);
+            cJSON_AddNumberToObject(root, "pid", status.pid);
+            cJSON_AddNumberToObject(root, "device_address", status.device_address);
+            cJSON_AddNumberToObject(root, "baud_rate", status.baud_rate);
+        }
+        cJSON_AddNumberToObject(root, "bytes_received_last_10s", status.bytes_received_last_10s);
+        if (status.last_reception_timestamp > 0) {
+            cJSON_AddNumberToObject(root, "last_reception_timestamp", status.last_reception_timestamp);
+        } else {
+            cJSON_AddStringToObject(root, "last_reception_timestamp", "never");
+        }
+        cJSON_AddStringToObject(root, "status_message", status.status_message);
+    } else {
+        cJSON_AddStringToObject(root, "error", "Failed to get USB status");
+    }
+    
+    const char *json_str = cJSON_Print(root);
+    if (json_str == NULL) {
+        cJSON_Delete(root);
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to serialize JSON");
+        return ESP_FAIL;
+    }
+    httpd_resp_sendstr(req, json_str);
+    free((void *) json_str);
+    cJSON_Delete(root);
+#else
+    // USB CDC Host not configured - return "not available" response
+    cJSON *root = cJSON_CreateObject();
+    if (root == NULL) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to create JSON object");
+        return ESP_FAIL;
+    }
+    cJSON_AddBoolToObject(root, "host_initialized", false);
+    cJSON_AddBoolToObject(root, "device_connected", false);
+    cJSON_AddStringToObject(root, "status_message", "USB CDC Host not configured");
+    cJSON_AddStringToObject(root, "error", "USB CDC Host feature not enabled in this build");
+    
+    const char *json_str = cJSON_Print(root);
+    if (json_str == NULL) {
+        cJSON_Delete(root);
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to serialize JSON");
+        return ESP_FAIL;
+    }
+    httpd_resp_sendstr(req, json_str);
+    free((void *) json_str);
+    cJSON_Delete(root);
+#endif
+    return ESP_OK;
+}
+
 esp_err_t start_rest_server(const char *base_path) {
     REST_CHECK(base_path, "wrong base path", err);
     rest_server_context_t *rest_context = calloc(1, sizeof(rest_server_context_t));
@@ -416,7 +748,7 @@ esp_err_t start_rest_server(const char *base_path) {
     httpd_handle_t server = NULL;
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.uri_match_fn = httpd_uri_match_wildcard;
-    config.max_uri_handlers = 9;
+    config.max_uri_handlers = 14; // Increased for USB status endpoint
 
     ESP_LOGI(TAG, "Starting HTTP Server");
     REST_CHECK(httpd_start(&server, &config) == ESP_OK, "Start server failed", err_start);
@@ -482,6 +814,51 @@ esp_err_t start_rest_server(const char *base_path) {
             .user_ctx = rest_context
     };
     httpd_register_uri_handler(server, &settings_clients_clear_udp_get_uri);
+
+    /* URI handler for UART test status (GET) */
+    httpd_uri_t uart_test_get_uri = {
+            .uri = "/api/uart_test",
+            .method = HTTP_GET,
+            .handler = uart_test_get_handler,
+            .user_ctx = rest_context
+    };
+    httpd_register_uri_handler(server, &uart_test_get_uri);
+
+    /* URI handler for UART test commands (POST) */
+    httpd_uri_t uart_test_post_uri = {
+            .uri = "/api/uart_test",
+            .method = HTTP_POST,
+            .handler = uart_test_post_handler,
+            .user_ctx = rest_context
+    };
+    httpd_register_uri_handler(server, &uart_test_post_uri);
+
+    /* URI handler for GPIO scan status (GET) */
+    httpd_uri_t uart_scan_get_uri = {
+            .uri = "/api/uart_scan",
+            .method = HTTP_GET,
+            .handler = uart_scan_get_handler,
+            .user_ctx = rest_context
+    };
+    httpd_register_uri_handler(server, &uart_scan_get_uri);
+
+    /* URI handler for GPIO scan commands (POST) */
+    httpd_uri_t uart_scan_post_uri = {
+            .uri = "/api/uart_scan",
+            .method = HTTP_POST,
+            .handler = uart_scan_post_handler,
+            .user_ctx = rest_context
+    };
+    httpd_register_uri_handler(server, &uart_scan_post_uri);
+
+    /* URI handler for USB CDC Host status (GET) - always register, handler checks if USB is configured */
+    httpd_uri_t usb_status_get_uri = {
+            .uri = "/api/usb_status",
+            .method = HTTP_GET,
+            .handler = usb_status_get_handler,
+            .user_ctx = rest_context
+    };
+    httpd_register_uri_handler(server, &usb_status_get_uri);
 
     /* URI handler for getting web server files */
     httpd_uri_t common_get_uri = {

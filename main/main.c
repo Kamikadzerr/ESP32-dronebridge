@@ -647,6 +647,18 @@ void long_press_callback(void *arg, void *usr_data) {
  * Set up the boot button GPIO to reset entire ESP32 settings and to force a reboot of the system
  */
 void set_reset_trigger() {
+    // For ESP32-S3, GPIO0 is a strapping pin. Ensure it has pull-up enabled
+    // to prevent entering download mode if the button is floating
+    #ifdef CONFIG_IDF_TARGET_ESP32S3
+    if (DB_RESET_PIN == GPIO_NUM_0) {
+        gpio_reset_pin(DB_RESET_PIN);
+        gpio_set_direction(DB_RESET_PIN, GPIO_MODE_INPUT);
+        gpio_set_pull_mode(DB_RESET_PIN, GPIO_PULLUP_ONLY);
+        // Small delay to ensure pin is stable
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+    #endif
+    
     button_config_t gpio_btn_cfg = {
         .long_press_time = CONFIG_BUTTON_LONG_PRESS_TIME_MS,
         .short_press_time = CONFIG_BUTTON_SHORT_PRESS_TIME_MS,

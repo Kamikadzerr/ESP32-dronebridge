@@ -1,0 +1,31 @@
+version: "3.8"
+
+services:
+  dronebridge-build:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: dronebridge-esp32-build:latest
+    container_name: dronebridge-esp32-builder
+    volumes:
+      # Mount the project directory
+      - ..:/project
+      # Cache build artifacts for faster rebuilds
+      - build-cache:/project/build
+    working_dir: /project
+    # Keep container running for interactive use
+    stdin_open: true
+    tty: true
+    # For flashing to connected devices
+    devices:
+      - /dev/ttyUSB0:/dev/ttyUSB0
+      - /dev/ttyACM0:/dev/ttyACM0
+    privileged: true
+    environment:
+      - IDF_CCACHE_ENABLE=1
+    command: /bin/bash
+
+volumes:
+  build-cache:
+    driver: local
+

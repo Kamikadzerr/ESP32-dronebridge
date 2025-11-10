@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html lang="en" xml:lang="en" xmlns="http://www.w3.org/1999/xhtml" xmlns="http://www.w3.org/1999/html">
 <head>
+    <meta charset="UTF-8">
     <meta name="description" content="Settings for DB for ESP32">
     <meta name="author" content="Wolfgang Christl">
     <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -172,33 +173,33 @@
             <h3 style="margin-top: 2rem">Serial</h3>
             <div class="row" id="tx_rx_div">
                 <div class="six columns">
-                    <label for="gpio_tx">UART TX GPIO</label>
+                    <label for="gpio_tx">TX GPIO</label>
                     <input type="number" name="gpio_tx" value="" id="gpio_tx">
                 </div>
                 <div class="six columns">
-                    <label for="gpio_rx">UART RX GPIO</label>
+                    <label for="gpio_rx">RX GPIO</label>
                     <input type="number" name="gpio_rx" value="" id="gpio_rx">
                 </div>
             </div>
             <div class="row" id="rts_cts_div">
                 <div class="six columns">
-                    <label for="gpio_rts">UART RTS GPIO</label>
+                    <label for="gpio_rts">RTS GPIO</label>
                     <input type="number" name="gpio_rts" value="" id="gpio_rts" onchange="flow_control_check()">
                 </div>
                 <div class="six columns">
-                    <label for="gpio_cts">UART CTS GPIO</label>
+                    <label for="gpio_cts">CTS GPIO</label>
                     <input type="number" name="gpio_cts" value="" id="gpio_cts" onchange="flow_control_check()">
                 </div>
             </div>
             <div class="row" id="rts_thresh_div">
                 <div class="six columns">
-                    <label for="rts_thresh">UART RTS threshold</label>
+                    <label for="rts_thresh">RTS threshold</label>
                     <input type="number" id="rts_thresh" name="rts_thresh" min="1" max="128">
                 </div>
             </div>
             <div class="row">
                 <div class="six columns">
-                    <label for="proto">UART serial protocol</label>
+                    <label for="proto">Serial protocol</label>
                     <select id="proto" name="proto" form="settings_form"
                             onchange="change_msp_ltm_visibility()">
                         <option value="1">MSP/LTM</option>
@@ -207,7 +208,7 @@
                     </select>
                 </div>
                 <div class="six columns" id="baud_div">
-                    <label for="baud">UART baud</label>
+                    <label for="baud">Serial baud rate</label>
                     <select name="baud" id="baud" form="settings_form">
                         <option value="5000000">5000000</option>
                         <option value="1500000">3000000</option>
@@ -297,6 +298,59 @@
                     </div>
                 </div>
             </div>
+            <h3 style="margin-top: 2rem" id="uart_test_section">UART Self-Test</h3>
+            <div class="row">
+                <div class="twelve columns">
+                    <div id="uart_test_status" style="padding: 1rem; background-color: #2c3e50; border-radius: 4px; margin-bottom: 1rem; color: #ecf0f1;">
+                        <div><strong style="color: #ecf0f1;">Pin Configuration:</strong> <span id="uart_pins" style="color: #ecf0f1;">Loading...</span></div>
+                        <div style="margin-top: 0.5rem;"><strong style="color: #ecf0f1;">UART Status:</strong> <span id="uart_init_status" style="color: #ecf0f1;">Loading...</span></div>
+                        <div id="uart_error_msg" style="margin-top: 0.5rem; color: #e74c3c; display: none;"></div>
+                        <div style="margin-top: 0.5rem;"><strong style="color: #ecf0f1;">Data Reception (last 10s):</strong> <span id="uart_bytes_received" style="color: #ecf0f1;">0</span> <span style="color: #ecf0f1;">bytes</span></div>
+                        <div style="margin-top: 0.5rem;"><strong style="color: #ecf0f1;">Last Reception:</strong> <span id="uart_last_reception" style="color: #ecf0f1;">Never</span></div>
+                        <div style="margin-top: 0.5rem;"><strong style="color: #ecf0f1;">Loopback Test:</strong> <span id="uart_loopback_status" style="color: #ecf0f1;">Not tested - Click button to test</span></div>
+                    </div>
+                    <button class="button" onclick="runLoopbackTest()" id="loopback_test_btn">Run Loopback Test</button>
+                    <p style="font-size: 0.9em; color: #666; margin-top: 0.5rem;">
+                        <strong>Loopback Test:</strong> Connect TX pin to RX pin with a jumper wire, then click the button above to test if UART is working correctly.
+                    </p>
+                </div>
+            </div>
+            <h3 style="margin-top: 2rem" id="gpio_scan_section">GPIO Pin Scanner</h3>
+            <div class="row">
+                <div class="twelve columns">
+                    <div id="gpio_scan_status" style="padding: 1rem; background-color: #2c3e50; border-radius: 4px; margin-bottom: 1rem; color: #ecf0f1;">
+                        <div><strong style="color: #ecf0f1;">Scan Status:</strong> <span id="scan_status_text" style="color: #ecf0f1;">Not started</span></div>
+                        <div id="scan_results_div" style="margin-top: 1rem; display: none;">
+                            <div><strong style="color: #ecf0f1;">Working Pin Pairs:</strong></div>
+                            <div id="scan_results_list" style="margin-top: 0.5rem; max-height: 200px; overflow-y: auto; background-color: #34495e; padding: 0.5rem; border-radius: 4px;">
+                                <!-- Results will be inserted here -->
+                            </div>
+                        </div>
+                    </div>
+                    <button class="button" onclick="startGpioScan()" id="gpio_scan_btn">Start GPIO Scan</button>
+                    <button class="button" onclick="stopGpioScan()" id="gpio_scan_stop_btn" style="display: none; margin-left: 0.5rem;">Stop Scan</button>
+                    <p style="font-size: 0.9em; color: #666; margin-top: 0.5rem;">
+                        <strong>GPIO Scan:</strong> Automatically tests all adjacent GPIO pin pairs (0-1, 1-2, 2-3, etc.) to find which pins are connected. Connect TX to RX with a jumper wire before starting the scan.
+                    </p>
+                </div>
+            </div>
+            <h3 style="margin-top: 2rem" id="usb_status_section" style="display: none;">USB CDC Host Status</h3>
+            <div class="row" id="usb_status_row" style="display: none;">
+                <div class="twelve columns">
+                    <div id="usb_status" style="padding: 1rem; background-color: #2c3e50; border-radius: 4px; margin-bottom: 1rem; color: #ecf0f1;">
+                        <div><strong style="color: #ecf0f1;">USB Host Status:</strong> <span id="usb_host_status" style="color: #ecf0f1;">Loading...</span></div>
+                        <div id="usb_device_info" style="margin-top: 0.5rem; display: none;">
+                            <div><strong style="color: #ecf0f1;">Device:</strong> <span id="usb_device_details" style="color: #ecf0f1;">-</span></div>
+                            <div style="margin-top: 0.5rem;"><strong style="color: #ecf0f1;">Baud Rate:</strong> <span id="usb_baud_rate" style="color: #ecf0f1;">-</span></div>
+                        </div>
+                        <div style="margin-top: 0.5rem;"><strong style="color: #ecf0f1;">Data Reception (last 10s):</strong> <span id="usb_bytes_received" style="color: #ecf0f1;">0</span> <span style="color: #ecf0f1;">bytes</span></div>
+                        <div style="margin-top: 0.5rem;"><strong style="color: #ecf0f1;">Last Reception:</strong> <span id="usb_last_reception" style="color: #ecf0f1;">Never</span></div>
+                    </div>
+                    <p style="font-size: 0.9em; color: #666; margin-top: 0.5rem;">
+                        <strong>USB CDC Host:</strong> Connect your FCU via USB to the ESP32-S3 USB-OTG port. The ESP32 acts as USB Host and connects to CDC-ACM devices. Requires external 5V VBUS power.
+                    </p>
+                </div>
+            </div>
         </div>
     </form>
     <div class="row">
@@ -317,13 +371,62 @@
     }
     while (get_settings() < 0) {
     }
-    // get stats every half a second
-    setInterval(get_stats, 500)
-    setInterval(update_conn_status, 500)
-    setInterval(check_for_issues, 1000)
+    // Polling intervals - only when page is visible
+    let statsInterval = null;
+    let connStatusInterval = null;
+    let issuesInterval = null;
+    let uartTestInterval = null;
+    let usbStatusInterval = null;
+    
+    function startPolling() {
+        if (statsInterval) return; // Already polling
+        // Poll stats every 5 seconds (reduced frequency)
+        statsInterval = setInterval(get_stats, 5000);
+        connStatusInterval = setInterval(update_conn_status, 5000);
+        issuesInterval = setInterval(check_for_issues, 5000);
+        // UART test status only when needed (user can manually refresh)
+        uartTestInterval = setInterval(updateUartTestStatus, 10000);  // Every 10 seconds
+        // USB status polling (only if USB is configured)
+        usbStatusInterval = setInterval(updateUsbStatus, 10000);  // Every 10 seconds
+    }
+    
+    function stopPolling() {
+        if (statsInterval) clearInterval(statsInterval);
+        if (connStatusInterval) clearInterval(connStatusInterval);
+        if (issuesInterval) clearInterval(issuesInterval);
+        if (uartTestInterval) clearInterval(uartTestInterval);
+        if (usbStatusInterval) clearInterval(usbStatusInterval);
+        statsInterval = null;
+        connStatusInterval = null;
+        issuesInterval = null;
+        uartTestInterval = null;
+        usbStatusInterval = null;
+    }
+    
+    // Use Page Visibility API to pause polling when tab is hidden
+    document.addEventListener('visibilitychange', function() {
+        if (document.hidden) {
+            stopPolling();
+        } else {
+            startPolling();
+            // Refresh immediately when tab becomes visible
+            get_stats();
+            update_conn_status();
+            check_for_issues();
+            updateUartTestStatus();
+            updateUsbStatus();
+        }
+    });
+    
+    // Initial setup
     setTimeout(change_msp_ltm_visibility, 500)
     setTimeout(change_ap_ip_visibility, 500)
     setTimeout(change_uart_visibility, 500)
+    setTimeout(updateUartTestStatus, 1000)  // Initial UART test status update
+    setTimeout(updateGpioScanStatus, 1500)  // Initial GPIO scan status update (only once, then polled when scan is active)
+    
+    // Start polling when page loads
+    startPolling();
 </script>
 </body>
 </html>

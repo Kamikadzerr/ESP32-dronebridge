@@ -3,6 +3,7 @@ const ROOT_URL = window.location.href       // for production code
 let conn_status = 0;		// connection status to the ESP32
 let old_conn_status = 0;	// connection status before last update of UI to know when it changed
 let serial_via_JTAG = 0;	// set to 1 if ESP32 is using the USB interface as serial interface for data and not using the UART. If 0 we set UART config to invisible for the user.
+let serial_via_USB = 0;		// set to 1 if ESP32 is using USB CDC Host as serial interface for data and not using the UART.
 let last_byte_count = 0;
 let last_timestamp_byte_count = 0;
 let esp_chip_model = 0;		// according to get_esp_chip_model_str()
@@ -98,16 +99,26 @@ function change_uart_visibility() {
 	let rts_cts_div = document.getElementById("rts_cts_div");
 	let rts_thresh_div = document.getElementById("rts_thresh_div");
 	let baud_div = document.getElementById("baud_div");
-	if (serial_via_JTAG === 0) {
+	let uart_test_section = document.getElementById("uart_test_section");
+	let gpio_scan_section = document.getElementById("gpio_scan_section");
+	
+	// Hide UART parameters if using JTAG or USB CDC Host
+	if (serial_via_JTAG === 0 && serial_via_USB === 0) {
+		// UART mode - show UART parameters
 		rts_cts_div.style.display = "block";
 		tx_rx_div.style.display = "block";
 		rts_thresh_div.style.display = "block";
 		baud_div.style.display = "block";
+		if (uart_test_section) uart_test_section.style.display = "block";
+		if (gpio_scan_section) gpio_scan_section.style.display = "block";
 	} else {
+		// JTAG or USB mode - hide UART parameters
 		rts_cts_div.style.display = "none";
 		tx_rx_div.style.display = "none";
 		rts_thresh_div.style.display = "none";
 		baud_div.style.display = "none";
+		if (uart_test_section) uart_test_section.style.display = "none";
+		if (gpio_scan_section) gpio_scan_section.style.display = "none";
 	}
 }
 
@@ -232,7 +243,8 @@ function get_system_info() {
 			"." + json_data["minor_version"] + "." + json_data["patch_version"] + " ("+json_data["maturity_version"]+")" +
 			" - esp-idf " + json_data["idf_version"] + " - " + get_esp_chip_model_str(json_data["esp_chip_model"])
 		document.getElementById("esp_mac").innerHTML = json_data["esp_mac"]
-		serial_via_JTAG = json_data["serial_via_JTAG"];
+		serial_via_JTAG = json_data["serial_via_JTAG"] || 0;
+		serial_via_USB = json_data["serial_via_USB"] || 0;
 		// set external antenna option visible based on info if RF switch is available on the board
 		if (parseInt(json_data["has_rf_switch"]) === 1) {
 			document.getElementById("ant_use_ext_div").style.display = "block";
@@ -473,5 +485,303 @@ function save_settings() {
 		});
 	} else {
 		console.log("Form was not filled out correctly.")
+	}
+}
+
+// UART Self-Test Functions
+async function updateUartTestStatus() {
+	try {
+		const data = await get_json("api/uart_test");
+		
+		// Update pin configuration
+		const pinsEl = document.getElementById("uart_pins");
+		let pinsText = `TX: GPIO${data.tx_pin}, RX: GPIO${data.rx_pin}`;
+		if (data.rts_pin > 0 || data.cts_pin > 0) {
+			pinsText += `, RTS: GPIO${data.rts_pin}, CTS: GPIO${data.cts_pin}`;
+		}
+		pinsEl.textContent = pinsText;
+		pinsEl.style.color = "#ecf0f1";  // Ensure light text color
+		
+		// Update UART initialization status
+		const statusEl = document.getElementById("uart_init_status");
+		const errorEl = document.getElementById("uart_error_msg");
+		if (data.uart_initialized) {
+			statusEl.textContent = "OK - Initialized";
+			statusEl.style.color = "#2ecc71";
+			errorEl.style.display = "none";
+		} else {
+			statusEl.textContent = "ERROR - Not Initialized";
+			statusEl.style.color = "#e74c3c";
+			if (data.init_error) {
+				errorEl.textContent = "Error: " + data.init_error;
+				errorEl.style.display = "block";
+			} else {
+				errorEl.style.display = "none";
+			}
+		}
+		
+		// Update data reception
+		const bytesEl = document.getElementById("uart_bytes_received");
+		bytesEl.textContent = data.bytes_received_last_10s || 0;
+		bytesEl.style.color = "#ecf0f1";  // Ensure light text color
+		
+		// Update last reception time
+		const lastRecvEl = document.getElementById("uart_last_reception");
+		if (data.last_reception_timestamp && data.last_reception_timestamp !== "never" && typeof data.last_reception_timestamp === "number") {
+			// ESP32 returns tick count, we need to estimate elapsed time
+			// Note: This is approximate since we don't know the exact tick rate
+			// For now, just show that data was received
+			lastRecvEl.textContent = "Recently";
+			lastRecvEl.style.color = "#2ecc71";
+		} else {
+			lastRecvEl.textContent = "Never";
+			lastRecvEl.style.color = "#ecf0f1";
+		}
+		
+		// Update loopback test status
+		const loopbackEl = document.getElementById("uart_loopback_status");
+		const loopbackBtn = document.getElementById("loopback_test_btn");
+		if (data.loopback_test_status === "pass") {
+			loopbackEl.textContent = "PASS - Test passed";
+			loopbackEl.style.color = "#2ecc71";
+			loopbackBtn.disabled = false;
+		} else if (data.loopback_test_status === "fail") {
+			loopbackEl.textContent = "FAIL - Test failed";
+			loopbackEl.style.color = "#e74c3c";
+			loopbackBtn.disabled = false;
+		} else if (data.loopback_test_status === "running") {
+			loopbackEl.textContent = "RUNNING - Test in progress...";
+			loopbackEl.style.color = "#f39c12";
+			loopbackBtn.disabled = true;
+		} else {
+			loopbackEl.textContent = "Not tested - Click button to test";
+			loopbackEl.style.color = "#ecf0f1";
+			loopbackBtn.disabled = false;
+		}
+	} catch (error) {
+		console.error("Failed to update UART test status:", error);
+	}
+}
+
+async function runLoopbackTest() {
+	const btn = document.getElementById("loopback_test_btn");
+	btn.disabled = true;
+	btn.textContent = "Running...";
+	
+	try {
+		const response = await send_json("api/uart_test", JSON.stringify({
+			test: "loopback",
+			duration_ms: 2000
+		}));
+		
+		if (response.status === "success") {
+			show_toast("Loopback test passed! TX and RX are connected correctly.", "#2e7d32");
+		} else {
+			show_toast("Loopback test failed. Make sure TX is connected to RX with a jumper wire.", "#d32f2f");
+		}
+		
+		// Update status after a short delay
+		setTimeout(updateUartTestStatus, 500);
+	} catch (error) {
+		show_toast("Error running loopback test: " + error.message, "#d32f2f");
+	} finally {
+		setTimeout(() => {
+			btn.disabled = false;
+			btn.textContent = "Run Loopback Test";
+		}, 2000);
+	}
+}
+
+// GPIO Scan Functions
+let gpioScanInterval = null;
+
+async function updateGpioScanStatus() {
+	try {
+		const data = await get_json("api/uart_scan");
+		
+		const statusEl = document.getElementById("scan_status_text");
+		const startBtn = document.getElementById("gpio_scan_btn");
+		const stopBtn = document.getElementById("gpio_scan_stop_btn");
+		const resultsDiv = document.getElementById("scan_results_div");
+		const resultsList = document.getElementById("scan_results_list");
+		
+		if (data.scan_in_progress) {
+			statusEl.textContent = data.scan_status || "Scanning...";
+			statusEl.style.color = "#f39c12";
+			startBtn.disabled = true;
+			stopBtn.style.display = "inline-block";
+			// Ensure polling is active when scan is in progress
+			if (!gpioScanInterval) {
+				gpioScanInterval = setInterval(updateGpioScanStatus, 2000);
+			}
+		} else {
+			statusEl.textContent = data.scan_status || "Not started";
+			if (data.result_count > 0) {
+				statusEl.style.color = "#2ecc71";
+			} else {
+				statusEl.style.color = "#ecf0f1";
+			}
+			startBtn.disabled = false;
+			stopBtn.style.display = "none";
+			// Stop polling when scan is not in progress
+			if (gpioScanInterval) {
+				clearInterval(gpioScanInterval);
+				gpioScanInterval = null;
+			}
+		}
+		
+		// Display results
+		if (data.results && data.results.length > 0) {
+			resultsDiv.style.display = "block";
+			resultsList.innerHTML = "";
+			
+			// Show only passed tests
+			const passedResults = data.results.filter(r => r.test_passed);
+			
+			if (passedResults.length > 0) {
+				passedResults.forEach(result => {
+					const resultDiv = document.createElement("div");
+					resultDiv.style.cssText = "padding: 0.5rem; margin: 0.25rem 0; background-color: #27ae60; border-radius: 3px; color: #ecf0f1;";
+					resultDiv.textContent = `GPIO${result.tx_pin} (TX) + GPIO${result.rx_pin} (RX) - PASS`;
+					resultsList.appendChild(resultDiv);
+				});
+			} else {
+				const noResultsDiv = document.createElement("div");
+				noResultsDiv.style.cssText = "padding: 0.5rem; color: #ecf0f1;";
+				noResultsDiv.textContent = "No working pin pairs found. Make sure TX is connected to RX with a jumper wire.";
+				resultsList.appendChild(noResultsDiv);
+			}
+		} else {
+			resultsDiv.style.display = "none";
+		}
+	} catch (error) {
+		console.error("Failed to update GPIO scan status:", error);
+	}
+}
+
+async function startGpioScan() {
+	const btn = document.getElementById("gpio_scan_btn");
+	btn.disabled = true;
+	
+	try {
+		const response = await send_json("api/uart_scan", JSON.stringify({
+			action: "start"
+		}));
+		
+		if (response.status === "success") {
+			show_toast("GPIO scan started. This may take a few minutes.", "#3498db");
+			// Start polling for scan status
+			if (gpioScanInterval) {
+				clearInterval(gpioScanInterval);
+			}
+			gpioScanInterval = setInterval(updateGpioScanStatus, 2000);
+			updateGpioScanStatus();
+		} else {
+			show_toast("Failed to start GPIO scan: " + response.message, "#e74c3c");
+			btn.disabled = false;
+		}
+	} catch (error) {
+		show_toast("Error starting GPIO scan: " + error.message, "#e74c3c");
+		btn.disabled = false;
+	}
+}
+
+async function stopGpioScan() {
+	try {
+		const response = await send_json("api/uart_scan", JSON.stringify({
+			action: "stop"
+		}));
+		
+		if (response.status === "success") {
+			show_toast("GPIO scan stopped", "#3498db");
+			if (gpioScanInterval) {
+				clearInterval(gpioScanInterval);
+				gpioScanInterval = null;
+			}
+			updateGpioScanStatus();
+		}
+	} catch (error) {
+		show_toast("Error stopping GPIO scan: " + error.message, "#e74c3c");
+	}
+}
+
+// USB CDC Host Status Functions
+async function updateUsbStatus() {
+	try {
+		const data = await get_json("api/usb_status");
+		
+		// Show USB section if USB is available
+		const usbSection = document.getElementById("usb_status_section");
+		const usbRow = document.getElementById("usb_status_row");
+		if (usbSection && usbRow) {
+			usbSection.style.display = "block";
+			usbRow.style.display = "block";
+		}
+		
+		const hostStatusEl = document.getElementById("usb_host_status");
+		const deviceInfoEl = document.getElementById("usb_device_info");
+		const deviceDetailsEl = document.getElementById("usb_device_details");
+		const baudRateEl = document.getElementById("usb_baud_rate");
+		const bytesReceivedEl = document.getElementById("usb_bytes_received");
+		const lastReceptionEl = document.getElementById("usb_last_reception");
+		
+		if (hostStatusEl) {
+			if (data.host_initialized) {
+				if (data.device_connected) {
+					hostStatusEl.textContent = "OK - Device Connected";
+					hostStatusEl.style.color = "#2ecc71";
+					
+					if (deviceInfoEl) deviceInfoEl.style.display = "block";
+					if (deviceDetailsEl) {
+						deviceDetailsEl.textContent = `VID: 0x${data.vid.toString(16).toUpperCase().padStart(4, '0')}, PID: 0x${data.pid.toString(16).toUpperCase().padStart(4, '0')}, Addr: ${data.device_address}`;
+						deviceDetailsEl.style.color = "#ecf0f1";
+					}
+					if (baudRateEl) {
+						baudRateEl.textContent = data.baud_rate || "115200";
+						baudRateEl.style.color = "#ecf0f1";
+					}
+				} else {
+					hostStatusEl.textContent = "OK - Waiting for device...";
+					hostStatusEl.style.color = "#f39c12";
+					if (deviceInfoEl) deviceInfoEl.style.display = "none";
+				}
+			} else {
+				hostStatusEl.textContent = "Not initialized";
+				hostStatusEl.style.color = "#e74c3c";
+				if (deviceInfoEl) deviceInfoEl.style.display = "none";
+			}
+		}
+		
+		if (bytesReceivedEl) {
+			bytesReceivedEl.textContent = data.bytes_received_last_10s || 0;
+			bytesReceivedEl.style.color = "#ecf0f1";
+		}
+		
+		if (lastReceptionEl) {
+			if (data.last_reception_timestamp && data.last_reception_timestamp !== "never") {
+				const now = Date.now();
+				const lastReception = data.last_reception_timestamp * 1000; // Convert ticks to ms (approximate)
+				const diff = now - lastReception;
+				if (diff < 5000) {
+					lastReceptionEl.textContent = "Recently";
+					lastReceptionEl.style.color = "#2ecc71";
+				} else if (diff < 30000) {
+					lastReceptionEl.textContent = "A few seconds ago";
+					lastReceptionEl.style.color = "#f39c12";
+				} else {
+					lastReceptionEl.textContent = "Long time ago";
+					lastReceptionEl.style.color = "#e74c3c";
+				}
+			} else {
+				lastReceptionEl.textContent = "Never";
+				lastReceptionEl.style.color = "#95a5a6";
+			}
+		}
+	} catch (error) {
+		// USB status endpoint might not exist if USB is not configured
+		// Silently fail - don't show error if USB is not available
+		if (error.message && !error.message.includes("404")) {
+			console.error("Failed to update USB status:", error);
+		}
 	}
 }

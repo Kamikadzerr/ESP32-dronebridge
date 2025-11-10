@@ -7,7 +7,7 @@ CMakeListsPrivate.txt
 .clang_complete
 .gcc-flags.json
 .idea/
-build/
+build/tmp/
 cmake-build-debug*
 cmake-build-release*
 managed_components/espressif__mdns/.component_hash

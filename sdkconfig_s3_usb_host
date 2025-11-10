@@ -7,6 +7,12 @@ CONFIG_DB_SERIAL_OPTION_USB_CDC_HOST=y
 # CONFIG_DB_SERIAL_OPTION_UART is not set
 # CONFIG_DB_SERIAL_OPTION_JTAG is not set
 
+# Enable USB Host functionality
+CONFIG_USB_HOST_ENABLED=y
+
 # Enable USB Hub support for powered hubs (optional but recommended)
 CONFIG_USB_HOST_HUBS_SUPPORTED=y
+
+# Ensure USB Host stack is enabled (should be auto-enabled, but explicit is safer)
+# Note: CDC-ACM Host component is automatically included when required in CMakeLists.txt
 

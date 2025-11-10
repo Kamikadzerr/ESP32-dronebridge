@@ -1,0 +1,48 @@
+# Build artifacts - now in tmp folder
+tmp/
+sdkconfig
+sdkconfig.old
+.config.old
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+venv/
+env/
+
+# OS files
+.DS_Store
+Thumbs.db
+.Trash-*
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Documentation
+wiki/
+*.md
+!README.md
+
+# Test files
+test/
+
+# Release files
+*.zip
+DroneBridge_ESP32_*/
+
+# Case files (3D printing)
+case/
+
+# Old backups
+original-drone-bridge/

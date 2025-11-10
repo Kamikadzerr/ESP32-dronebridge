@@ -303,9 +303,24 @@ void handle_tcp_master(const int tcp_master_socket, int tcp_clients[]) {
             if (tcp_clients[i] <= 0) {
                 tcp_clients[i] = new_tcp_client;
                 fcntl(tcp_clients[i], F_SETFL, O_NONBLOCK);
+                
+                // Enable TCP keepalive to detect dead connections
+                int keepalive = 1;
+                int keepidle = 30;  // Start keepalive after 30 seconds of idle
+                int keepintvl = 5;  // Send keepalive every 5 seconds
+                int keepcnt = 3;    // Close connection after 3 failed keepalives
+                setsockopt(tcp_clients[i], SOL_SOCKET, SO_KEEPALIVE, &keepalive, sizeof(keepalive));
+                setsockopt(tcp_clients[i], IPPROTO_TCP, TCP_KEEPIDLE, &keepidle, sizeof(keepidle));
+                setsockopt(tcp_clients[i], IPPROTO_TCP, TCP_KEEPINTVL, &keepintvl, sizeof(keepintvl));
+                setsockopt(tcp_clients[i], IPPROTO_TCP, TCP_KEEPCNT, &keepcnt, sizeof(keepcnt));
+                
+                // Set TCP_NODELAY to reduce latency (disable Nagle's algorithm)
+                int nodelay = 1;
+                setsockopt(tcp_clients[i], IPPROTO_TCP, TCP_NODELAY, &nodelay, sizeof(nodelay));
+                
                 char addr_str[128];
                 inet_ntoa_r(((struct sockaddr_in *) &source_addr)->sin_addr.s_addr, addr_str, sizeof(addr_str) - 1);
-                ESP_LOGI(TAG, "TCP: New client connected: %s", addr_str);
+                ESP_LOGI(TAG, "TCP: New client connected: %s (fd: %d)", addr_str, tcp_clients[i]);
                 num_connected_tcp_clients++;
                 return;
             }
@@ -664,17 +679,17 @@ _Noreturn void control_module_udp_tcp() {
                         write_to_serial(tcp_client_buffer, recv_length);
                     }
                 } else if (recv_length == 0) {
+                    ESP_LOGI(TAG, "TCP client[%d] (fd: %d) disconnected (recv returned 0)", i, tcp_clients[i]);
                     shutdown(tcp_clients[i], 0);
                     close(tcp_clients[i]);
                     tcp_clients[i] = -1;
-                    ESP_LOGI(TAG, "TCP client disconnected");
                     num_connected_tcp_clients--;
                 } else if (errno != EAGAIN && errno != EWOULDBLOCK) {
-                    ESP_LOGE(TAG, "Error receiving from TCP client %i (fd: %i): %d", i, tcp_clients[i], errno);
+                    ESP_LOGE(TAG, "Error receiving from TCP client[%d] (fd: %d): %d", i, tcp_clients[i], errno);
                     shutdown(tcp_clients[i], 0);
                     close(tcp_clients[i]);
-                    num_connected_tcp_clients--;
                     tcp_clients[i] = -1;
+                    num_connected_tcp_clients--;
                 }
             }
         }

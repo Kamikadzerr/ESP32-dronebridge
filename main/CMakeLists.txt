@@ -18,14 +18,16 @@ if(CONFIG_DB_SERIAL_OPTION_USB_CDC_HOST)
     list(APPEND SRCS db_usb_cdc_host.c)
 endif()
 
-set(REQUIRES_LIST )
+set(REQUIRES_LIST button esp_event nvs_flash json mbedtls vfs esp_wifi esp_timer spiffs esp_driver_uart esp_driver_usb_serial_jtag fmav_c_lib_v2 mdns)
+set(PRIV_REQUIRES_LIST bt esp_http_server)
 if(CONFIG_DB_SERIAL_OPTION_USB_CDC_HOST)
-    list(APPEND REQUIRES_LIST usb cdc_acm_host)
+    list(APPEND REQUIRES_LIST usb usb_host_cdc_acm)
 endif()
 
 idf_component_register(SRCS ${SRCS}
         INCLUDE_DIRS "."
-        REQUIRES ${REQUIRES_LIST})
+        REQUIRES ${REQUIRES_LIST}
+        PRIV_REQUIRES ${PRIV_REQUIRES_LIST})
 
 
 if(CONFIG_WEB_DEPLOY_SF)
